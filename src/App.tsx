@@ -4,9 +4,10 @@
  */
 
 import { useState } from 'react';
-import { LayoutDashboard, MessageSquareText, Bot, CreditCard, BarChart3, Settings, Power } from 'lucide-react';
+import { LayoutDashboard, MessageSquareText, Bot, CreditCard, BarChart3, Settings, Power, User } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import AutomationModule from './components/Automation';
+import LeadsModule from './components/Leads';
 import { SplashScreen, LoginPage, RegisterPage } from './components/AuthLayouts';
 import { AnimatePresence } from 'motion/react';
 
@@ -17,6 +18,7 @@ export default function App() {
 
   const menuItems = [
     { name: 'Dashboard', icon: LayoutDashboard },
+    { name: 'Fiko leads', icon: User },
     { name: 'Conversations', icon: MessageSquareText },
     { name: 'Automation', icon: Bot },
     { name: 'Paiements', icon: CreditCard },
@@ -77,6 +79,7 @@ export default function App() {
 
         {activeItem === 'Dashboard' && <Dashboard />}
         {activeItem === 'Automation' && <AutomationModule />}
+        {activeItem === 'Fiko leads' && <LeadsModule />}
       </div>
     </div>
   );
