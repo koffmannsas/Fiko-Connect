@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents an authenticated entrepreneur or team member using Fiko OS.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for Firebase user" },
+        "displayName": { "type": "string", "description": "The user's full name" },
+        "email": { "type": "string", "description": "User email address" },
+        "phoneNumber": { "type": "string", "description": "WhatsApp or contact number" },
+        "companyId": { "type": "string", "description": "ID of associated company" },
+        "role": { "type": "string", "description": "Role of user (owner or member)" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "email", "createdAt"]
+    },
+    "Company": {
+      "title": "Company",
+      "description": "Represents the business enterprise profile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique company document ID" },
+        "name": { "type": "string", "description": "Company name" },
+        "industry": { "type": "string", "description": "Industry or target domain category" },
+        "country": { "type": "string", "description": "Operational country" },
+        "whatsappNumber": { "type": "string", "description": "Liaison WhatsApp number" },
+        "ownerId": { "type": "string", "description": "User UID who owns this enterprise" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "industry", "country", "ownerId", "createdAt"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "Enterprise billing, usage quota and selected plans.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "description": "ID of associated company" },
+        "plan": { "type": "string", "enum": ["free", "starter", "business", "scale", "elite"] },
+        "status": { "type": "string", "enum": ["active", "suspended", "expired"] },
+        "maxContacts": { "type": "integer" },
+        "messagesSent": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "plan", "status", "createdAt"]
+    },
+    "FikoMemory": {
+      "title": "FikoMemory",
+      "description": "AI knowledge graph, conversation intelligence metrics and business logs.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "description": "Reference company ID" },
+        "messagesProcessedCount": { "type": "integer" },
+        "cognitiveTokensCount": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "messagesProcessedCount", "updatedAt"]
+    },
+    "Agent": {
+      "title": "Agent",
+      "description": "Individual deployed AI copilot instances configured for WhatsApp or live chat.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string" },
+        "autoPilot": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "companyId", "name", "status", "autoPilot", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User accounts with roles"
+    },
+    "/companies/{companyId}": {
+      "schema": "Company",
+      "description": "Business organizations"
+    },
+    "/subscriptions/{subscriptionId}": {
+      "schema": "Subscription",
+      "description": "Entitlement settings"
+    },
+    "/fiko_memory/{memoryId}": {
+      "schema": "FikoMemory",
+      "description": "Cognitive long-term memories"
+    },
+    "/agents/{agentId}": {
+      "schema": "Agent",
+      "description": "Configured assistant agents"
+    }
+  }
+}
