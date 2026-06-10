@@ -24,7 +24,8 @@ import {
   Lock,
   LogOut,
   AlertTriangle,
-  Zap
+  Zap,
+  Bell
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import AutomationModule from './components/Automation';
@@ -216,16 +217,26 @@ export default function App() {
         <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-[900] tracking-tight">{activeItem}</h1>
             
-            <div className={`flex items-center gap-3 px-4 py-2 rounded-full border ${autoPilot ? 'bg-green-950/20 border-green-800/40 text-green-400' : 'bg-zinc-900/40 border-gray-800 text-zinc-400'}`}>
-                <Power size={14} className={autoPilot ? 'text-green-500 animate-pulse' : 'text-gray-500'}/>
-                <span className="text-xs font-bold tracking-wide">{autoPilot ? 'Mode Auto Pilot Activé' : 'Mode Auto Pilot Désactivé'}</span>
-                <button 
-                  onClick={() => !isDemoMode ? setAutoPilot(!autoPilot) : null} 
-                  className={`w-9 h-5 rounded-full relative transition ${autoPilot ? 'bg-green-600' : 'bg-zinc-800'} ${isDemoMode ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-                  title={isDemoMode ? 'Désactivé en Mode Démo' : 'Basculer l\'autopilote'}
-                >
-                    <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-all ${autoPilot ? 'translate-x-4' : ''}`}></div>
-                </button>
+            <div className="flex items-center gap-6">
+                <div className="relative cursor-pointer">
+                    <Bell size={20} className="text-gray-400 hover:text-white transition" />
+                    {/* Badge logic placeholder - assumed hasUnread from global state */}
+                    {true && (
+                      <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-[#E10600] border-2 border-[#050505]"></span>
+                    )}
+                </div>
+                
+                <div className={`flex items-center gap-3 px-4 py-2 rounded-full border ${autoPilot ? 'bg-green-950/20 border-green-800/40 text-green-400' : 'bg-zinc-900/40 border-gray-800 text-zinc-400'}`}>
+                    <Power size={14} className={autoPilot ? 'text-green-500 animate-pulse' : 'text-gray-500'}/>
+                    <span className="text-xs font-bold tracking-wide">{autoPilot ? 'Mode Auto Pilot Activé' : 'Mode Auto Pilot Désactivé'}</span>
+                    <button 
+                      onClick={() => !isDemoMode ? setAutoPilot(!autoPilot) : null} 
+                      className={`w-9 h-5 rounded-full relative transition ${autoPilot ? 'bg-green-600' : 'bg-zinc-800'} ${isDemoMode ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                      title={isDemoMode ? 'Désactivé en Mode Démo' : 'Basculer l\'autopilote'}
+                    >
+                        <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-all ${autoPilot ? 'translate-x-4' : ''}`}></div>
+                    </button>
+                </div>
             </div>
         </div>
 
