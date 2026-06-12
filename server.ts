@@ -73,21 +73,69 @@ async function resolveCompanyId(phoneNumber: string) {
     return "fiko_prod_68469"; // Fallback for review
 }
 
-app.post("/webhook", async (req, res) => {
-    // 1. Validate Meta Challenge
-    if (req.query['hub.mode'] === 'subscribe') {
-        return res.send(req.query['hub.challenge']);
+// --- WhatsApp API Sender ---
+async function sendWhatsAppMessage(to: string, text: string) {
+    const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
+
+    if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
+        console.warn("WhatsApp credentials missing. Skipping send.");
+        return;
     }
 
-    const body = req.body;
-    if (!body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
+    try {
+        const response = await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${ACCESS_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to,
+                type: "text",
+                text: { body: text }
+            })
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error("Error sending WhatsApp message:", error);
+    }
+}
+
+app.get("/webhook", (req, res) => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+
+    if (mode && token) {
+        if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+            console.log("WEBHOOK_VERIFIED");
+            res.status(200).send(challenge);
+        } else {
+            res.sendStatus(403);
+        }
+    }
+});
+
+app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
+    // 2. Verify Signature
+    if (WHATSAPP_APP_SECRET && !verifySignature(req, res, req.body)) {
+        console.error("Invalid webhook signature.");
+        return res.sendStatus(401);
+    }
+
+    const bodyObj = JSON.parse(req.body.toString());
+    if (!bodyObj.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
         return res.sendStatus(200);
     }
 
-    const msg = body.entry[0].changes[0].value.messages[0];
+    const msg = bodyObj.entry[0].changes[0].value.messages[0];
     const wa_id = msg.id;
     const from = msg.from;
-    const recipient = body.entry[0].changes[0].value.metadata?.display_phone_number;
+    const recipient = bodyObj.entry[0].changes[0].value.metadata?.display_phone_number;
     const text = msg.text?.body;
 
     // 2. Multi-tenant Resolution
@@ -115,9 +163,28 @@ app.post("/webhook", async (req, res) => {
     });
 
     // 6. AI Response (Async)
-    processWithAI(companyId, from, text).catch(console.error);
+    processWithAI(companyId, from, text)
+        .then(async (aiResponse) => {
+            await sendWhatsAppMessage(from, aiResponse);
+        })
+        .catch(console.error);
 
     res.sendStatus(200);
+});
+
+// --- Campaign Endpoints ---
+app.post("/api/campaigns/generate", async (req, res) => {
+    try {
+        const { objective, audience, tone } = req.body;
+        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+        const prompt = `Génère un message de campagne WhatsApp. Objectif: ${objective}, Audience: ${audience}, Ton: ${tone}. Retourne un JSON array avec version "short" et "long".`;
+        const result = await model.generateContent(prompt);
+        res.json(JSON.parse(result.response.text() || "[]"));
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 const PORT = process.env.PORT || 3000;
