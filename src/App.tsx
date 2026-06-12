@@ -43,6 +43,7 @@ export default function App() {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [onboardingData, setOnboardingData] = useState<any>({
     companyName: 'Koffmann Capital Group',
+    companyId: 'fiko_prod_68469',
     businessType: 'services',
     businessCategory: 'Fintech & Marketing',
     workingHours: '24/7',
@@ -248,9 +249,9 @@ export default function App() {
           />
         )}
         {activeItem === 'Automation' && <AutomationModule />}
-        {activeItem === 'Fiko leads' && <LeadsModule />}
+        {activeItem === 'Fiko leads' && <LeadsModule onboardingData={onboardingData} />}
         {activeItem === 'Campagnes' && <CampaignsModule />}
-        {activeItem === 'Conversations' && <ConversationsModule />}
+        {activeItem === 'Conversations' && <ConversationsModule onboardingData={onboardingData} />}
         {activeItem === 'Paiements' && <PaymentsModule />}
         {activeItem === 'Analytics' && <AnalyticsModule />}
         {activeItem === 'Settings' && (

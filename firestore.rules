@@ -1,41 +1,37 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Global helper: Is authenticated?
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    // --- USERS COLLECTION ---
+    // Multi-tenant Security: Users only access their own company data
     match /users/{userId} {
-      allow read, write: if isSignedIn() && request.auth.uid == userId;
+      allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // --- COMPANIES COLLECTION ---
     match /companies/{companyId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null && (
+        resource == null || resource.data.ownerId == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == companyId
+      );
     }
 
-    // --- SUBSCRIPTIONS COLLECTION ---
-    match /subscriptions/{subId} {
-      allow read, write: if isSignedIn();
+    match /leads/{leadId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == resource.data.companyId;
+      allow create: if request.auth != null;
     }
 
-    // --- FIKO MEMORY COLLECTION ---
-    match /fiko_memory/{memId} {
-      allow read, write: if isSignedIn();
+    match /messages/{messageId} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == resource.data.companyId;
+      allow create: if request.auth != null;
     }
 
-    // --- AGENTS COLLECTION ---
-    match /agents/{agentId} {
-      allow read, write: if isSignedIn();
+    match /fiko_memory/{companyId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == companyId;
     }
 
-    // --- LEADS, MESSAGES, PAYMENTS, CAMPAIGNS ---
-    match /leads/{leadId} { allow read, write: if isSignedIn(); }
-    match /messages/{messageId} { allow read, write: if isSignedIn(); }
-    match /payments/{paymentId} { allow read, write: if isSignedIn(); }
-    match /campaigns/{campaignId} { allow read, write: if isSignedIn(); }
+    match /processed_messages/{msgId} {
+      allow read, write: if false; // Server-only idempotency
+    }
   }
 }
