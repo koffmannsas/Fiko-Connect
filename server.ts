@@ -65,6 +65,36 @@ app.get("/firebase-status", async (req, res) => {
     }
 });
 
+app.get("/ai-status", async (req, res) => {
+    const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+    if (!apiKey) {
+        return res.status(500).json({ status: "error", message: "API Key missing" });
+    }
+
+    try {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+
+        // Quick verify call
+        const result = await model.generateContent("ping");
+        const response = result.response.text();
+
+        res.json({
+            provider: "gemini",
+            model: GEMINI_MODEL,
+            status: "ok",
+            verify: response ? "success" : "failed"
+        });
+    } catch (e: any) {
+        res.status(500).json({
+            provider: "gemini",
+            model: GEMINI_MODEL,
+            status: "error",
+            error: e.message
+        });
+    }
+});
+
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
 
 // --- SECURITY: Webhook Signature Verification ---
@@ -104,10 +134,12 @@ async function isDuplicate(messageId: string) {
 }
 
 // --- AI: Fiko Closer with Memory ---
+const GEMINI_MODEL = "gemini-2.0-flash";
+
 async function processWithAI(companyId: string, leadId: string, message: string) {
     console.log(`[AI] Starting generation for Lead: ${leadId}`);
     const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
     // 1. Context Retrieval
     let businessContext = "Expert en vente WhatsApp.";
@@ -310,7 +342,7 @@ app.post("/api/campaigns/generate", express.json(), async (req, res) => {
     try {
         const { objective, audience, tone } = req.body;
         const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
         const prompt = `Génère un message de campagne WhatsApp. Objectif: ${objective}, Audience: ${audience}, Ton: ${tone}. JSON output version "short" et "long".`;
         const result = await model.generateContent(prompt);
         res.json(JSON.parse(result.response.text() || "[]"));
@@ -323,7 +355,7 @@ app.post("/api/campaigns/analyze", express.json(), async (req, res) => {
     try {
         const { message } = req.body;
         const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
         const prompt = `Analyse cette campagne WhatsApp: "${message}". Retourne un JSON avec score global, scores détaillés (hook, cta, emotional, personalization, readability), suggestions, predictedOpenRate, predictedReplyRate.`;
         const result = await model.generateContent(prompt);
         res.json(JSON.parse(result.response.text() || "{}"));
@@ -343,7 +375,28 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+
+async function verifyAI() {
+    console.log("[INIT] Verifying Gemini AI Model...");
+    const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+    if (!apiKey) {
+        console.warn("[INIT] Gemini API Key missing! AI functions will fail.");
+        return;
+    }
+    try {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+        const result = await model.generateContent("Test connection");
+        if (result.response.text()) {
+            console.log(`[INIT] Gemini AI (${GEMINI_MODEL}) verified and active.`);
+        }
+    } catch (e: any) {
+        console.error(`[INIT] Gemini AI Verification FAILED: ${e.message}`);
+    }
+}
+
+app.listen(PORT, async () => {
+    await verifyAI();
     console.log(`\n🚀 Fiko Production Engine Active on port ${PORT}`);
     console.log("------------------------------------------");
     console.log(`Mode: ${process.env.NODE_ENV || 'development'}`);
