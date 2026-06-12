@@ -1,4 +1,7 @@
 import express from "express";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import { fileURLToPath } from "url";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -7,15 +10,20 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 // --- INFRASTRUCTURE: Firebase Admin ---
-const isLocal = !process.env.GOOGLE_CLOUD_PROJECT && !process.env.FIREBASE_CONFIG;
+const isLocal = !process.env.GOOGLE_CLOUD_PROJECT && !process.env.FIREBASE_CONFIG && process.env.NODE_ENV !== "production";
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "krypton-ai-490214";
+
 if (!getApps().length) {
     if (isLocal) {
         console.warn("[INIT] No Firebase project detected. Using mock database.");
         initializeApp({ projectId: "fiko-mock" });
     } else {
         initializeApp({
-            credential: applicationDefault()
+            credential: applicationDefault(),
+            projectId: PROJECT_ID
         });
     }
 }
@@ -37,6 +45,24 @@ app.get("/config-check", (req, res) => {
         verify_token: !!process.env.WHATSAPP_VERIFY_TOKEN,
         firebase: !!(process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT)
     });
+});
+
+app.get("/firebase-status", async (req, res) => {
+    try {
+        const collections = await db.listCollections();
+        const collectionIds = collections.map(c => c.id);
+        res.json({
+            projectId: db.projectId,
+            firestoreConnected: true,
+            collections: collectionIds
+        });
+    } catch (e: any) {
+        res.status(500).json({
+            projectId: db.projectId,
+            firestoreConnected: false,
+            error: e.message
+        });
+    }
 });
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
@@ -285,8 +311,7 @@ app.post("/api/campaigns/generate", express.json(), async (req, res) => {
         const { objective, audience, tone } = req.body;
         const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-        const prompt = `Génère un message de campagne WhatsApp. Objectif: ${objective}, Audience: ${audience}, Ton: ${tone}. JSON array output version "short" et "long".`;
+        const prompt = `Génère un message de campagne WhatsApp. Objectif: ${objective}, Audience: ${audience}, Ton: ${tone}. JSON output version "short" et "long".`;
         const result = await model.generateContent(prompt);
         res.json(JSON.parse(result.response.text() || "[]"));
     } catch (e: any) {
@@ -294,10 +319,34 @@ app.post("/api/campaigns/generate", express.json(), async (req, res) => {
     }
 });
 
+app.post("/api/campaigns/analyze", express.json(), async (req, res) => {
+    try {
+        const { message } = req.body;
+        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const prompt = `Analyse cette campagne WhatsApp: "${message}". Retourne un JSON avec score global, scores détaillés (hook, cta, emotional, personalization, readability), suggestions, predictedOpenRate, predictedReplyRate.`;
+        const result = await model.generateContent(prompt);
+        res.json(JSON.parse(result.response.text() || "{}"));
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- PRODUCTION SERVING ---
+if (process.env.NODE_ENV === "production") {
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => {
+        res.sendFile(path.join(__dirname, "dist", "index.html"));
+    });
+} else {
+    // Vite middleware for dev handled by concurrently/vite
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`\n🚀 Fiko Production Engine Active on port ${PORT}`);
     console.log("------------------------------------------");
+    console.log(`Mode: ${process.env.NODE_ENV || 'development'}`);
     console.log(`App Secret: ${process.env.WHATSAPP_APP_SECRET ? 'OK' : 'MISSING'}`);
     console.log(`Verify Token: ${process.env.WHATSAPP_VERIFY_TOKEN ? 'OK' : 'MISSING'}`);
     console.log(`Gemini Key: ${process.env.GOOGLE_GEMINI_API_KEY ? 'OK' : 'MISSING'}`);
