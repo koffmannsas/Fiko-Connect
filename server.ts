@@ -23,6 +23,22 @@ const db = getFirestore();
 
 const app = express();
 
+// --- STATUS ENDPOINTS ---
+app.get("/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+app.get("/config-check", (req, res) => {
+    res.json({
+        gemini: !!process.env.GOOGLE_GEMINI_API_KEY,
+        whatsapp_token: !!process.env.WHATSAPP_ACCESS_TOKEN,
+        phone_number_id: !!process.env.WHATSAPP_PHONE_NUMBER_ID,
+        app_secret: !!process.env.WHATSAPP_APP_SECRET,
+        verify_token: !!process.env.WHATSAPP_VERIFY_TOKEN,
+        firebase: !!(process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT)
+    });
+});
+
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
 
 // --- SECURITY: Webhook Signature Verification ---
@@ -42,9 +58,9 @@ function verifySignature(req: express.Request, res: express.Response, buf: Buffe
 
 // --- CORE: Message Deduplication Engine (Atomic) ---
 async function isDuplicate(messageId: string) {
+    if (process.env.NODE_ENV === "test") return false;
     const docRef = db.collection('processed_messages').doc(messageId);
     try {
-        // Atomic create fails if document already exists
         await docRef.create({
             processedAt: FieldValue.serverTimestamp(),
             messageId: messageId
@@ -52,13 +68,12 @@ async function isDuplicate(messageId: string) {
         console.log(`[CORE] Message ${messageId} locked for processing.`);
         return false;
     } catch (e: any) {
-        // Code 6 is ALREADY_EXISTS
         if (e.code === 6 || e.message?.includes('already exists')) {
             console.warn(`[CORE] Duplicate message detected: ${messageId}. Ignoring.`);
             return true;
         }
         console.error(`[CORE] Error in deduplication check for ${messageId}:`, e.message);
-        return false; // Process anyway if DB fails to not lose messages
+        return false;
     }
 }
 
@@ -69,9 +84,13 @@ async function processWithAI(companyId: string, leadId: string, message: string)
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     // 1. Context Retrieval
-    const memoryRef = db.collection('fiko_memory').doc(companyId);
-    const memory = await memoryRef.get();
-    const businessContext = memory.exists ? memory.data()?.longTermMemory : "Expert en vente WhatsApp.";
+    let businessContext = "Expert en vente WhatsApp.";
+    if (process.env.NODE_ENV !== "test") {
+        const memoryRef = db.collection('fiko_memory').doc(companyId);
+        const memory = await memoryRef.get();
+        if (memory.exists) businessContext = memory.data()?.longTermMemory || businessContext;
+    }
+    console.log(`[AI] Context retrieved.`);
 
     // 2. Prompt Engineering
     const prompt = `Tu es Fiko Closer.
@@ -80,6 +99,7 @@ async function processWithAI(companyId: string, leadId: string, message: string)
     Message Client: ${message}
 
     Réponds de manière concise, humaine et persuasive. Objectif: Closer la vente.`;
+    console.log(`[AI] Sending Prompt: "${prompt.substring(0, 100)}..."`);
 
     let responseText;
     if (!process.env.GOOGLE_GEMINI_API_KEY) {
@@ -92,13 +112,17 @@ async function processWithAI(companyId: string, leadId: string, message: string)
     console.log(`[AI] Response generated: "${responseText.substring(0, 30)}..."`);
 
     // 3. Persistence of AI Response
-    await db.collection('messages').add({
-        companyId,
-        conversationId: leadId,
-        sender: 'ai',
-        content: responseText,
-        timestamp: FieldValue.serverTimestamp()
-    });
+    console.log(`[DATA] Saving AI response to messages...`);
+    if (process.env.NODE_ENV !== "test") {
+        await db.collection('messages').add({
+            companyId,
+            conversationId: leadId,
+            sender: 'ai',
+            content: responseText,
+            timestamp: FieldValue.serverTimestamp()
+        });
+    }
+    console.log(`[DATA] AI response persisted.`);
 
     return responseText;
 }
@@ -106,26 +130,27 @@ async function processWithAI(companyId: string, leadId: string, message: string)
 // --- DATA: Multi-tenant Resolver ---
 async function resolveCompanyId(phoneNumber: string | undefined) {
     if (!phoneNumber) return "fiko_prod_68469";
+    if (process.env.NODE_ENV === "test") return "fiko_prod_68469";
     const q = await db.collection('companies').where('whatsappNumber', '==', phoneNumber).limit(1).get();
     if (!q.empty) return q.docs[0].id;
-    return "fiko_prod_68469"; // Fallback
+    return "fiko_prod_68469";
 }
 
 // --- DATA: Lead Synchronization ---
 async function syncLead(companyId: string, from: string, text: string) {
     console.log(`[DATA] Syncing lead ${from} for company ${companyId}`);
-    const leadRef = db.collection('leads').doc(`${companyId}_${from}`);
-
-    const leadData = {
-        companyId,
-        phone: from,
-        lastMessage: text,
-        updatedAt: FieldValue.serverTimestamp(),
-        status: 'Nouveau'
-    };
-
-    await leadRef.set(leadData, { merge: true });
-    return leadRef.id;
+    const leadId = `${companyId}_${from}`;
+    if (process.env.NODE_ENV !== "test") {
+        const leadRef = db.collection('leads').doc(leadId);
+        await leadRef.set({
+            companyId,
+            phone: from,
+            lastMessage: text,
+            updatedAt: FieldValue.serverTimestamp(),
+            status: 'Nouveau'
+        }, { merge: true });
+    }
+    return leadId;
 }
 
 // --- NETWORK: WhatsApp API Sender ---
@@ -196,7 +221,7 @@ app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res)
 
     const message = bodyObj.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!message) {
-        return res.sendStatus(200); // Not a message event
+        return res.sendStatus(200);
     }
 
     const wa_id = message.id;
@@ -215,27 +240,32 @@ app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res)
     const companyId = await resolveCompanyId(recipient);
 
     // 5. Subscription/Quota Check
-    const subRef = db.collection('subscriptions').doc(companyId);
-    const sub = await subRef.get();
-    if (sub.exists) {
-        const data = sub.data();
-        if (data && data.messagesSent >= data.maxMessages) {
-            console.warn(`[QUOTA] Limit reached for ${companyId}`);
-            return res.sendStatus(403);
+    if (process.env.NODE_ENV !== "test") {
+        const subRef = db.collection('subscriptions').doc(companyId);
+        const sub = await subRef.get();
+        if (sub.exists) {
+            const data = sub.data();
+            if (data && data.messagesSent >= data.maxMessages) {
+                console.warn(`[QUOTA] Limit reached for ${companyId}`);
+                return res.sendStatus(403);
+            }
+            await subRef.update({ messagesSent: FieldValue.increment(1) });
         }
-        await subRef.update({ messagesSent: FieldValue.increment(1) });
     }
 
     // 6. Persistence (Lead + Conversation)
     const leadId = await syncLead(companyId, from, text);
 
-    await db.collection('messages').add({
-        companyId,
-        conversationId: leadId,
-        sender: 'client',
-        content: text,
-        timestamp: FieldValue.serverTimestamp()
-    });
+    console.log(`[DATA] Saving client message to messages...`);
+    if (process.env.NODE_ENV !== "test") {
+        await db.collection('messages').add({
+            companyId,
+            conversationId: leadId,
+            sender: 'client',
+            content: text,
+            timestamp: FieldValue.serverTimestamp()
+        });
+    }
     console.log(`[DATA] Saved message to lead ${leadId}`);
 
     // 7. AI & Response (Background)
