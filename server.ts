@@ -7,53 +7,91 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// --- INFRASTRUCTURE: Firebase Admin ---
+const isLocal = !process.env.GOOGLE_CLOUD_PROJECT && !process.env.FIREBASE_CONFIG;
 if (!getApps().length) {
-    initializeApp({
-        credential: applicationDefault()
-    });
+    if (isLocal) {
+        console.warn("[INIT] No Firebase project detected. Using mock database.");
+        initializeApp({ projectId: "fiko-mock" });
+    } else {
+        initializeApp({
+            credential: applicationDefault()
+        });
+    }
 }
 const db = getFirestore();
 
 const app = express();
-app.use(express.json());
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
 
 // --- SECURITY: Webhook Signature Verification ---
 function verifySignature(req: express.Request, res: express.Response, buf: Buffer) {
     const signature = req.headers['x-hub-signature-256'] as string;
-    if (!signature) return false;
+    if (!signature) {
+        console.warn("[SECURITY] Missing x-hub-signature-256 header");
+        return false;
+    }
     const hash = "sha256=" + crypto.createHmac('sha256', WHATSAPP_APP_SECRET).update(buf).digest('hex');
-    return signature === hash;
+    const isValid = (signature === hash);
+    if (!isValid) {
+        console.error("[SECURITY] Signature mismatch!");
+    }
+    return isValid;
 }
 
 // --- CORE: Message Deduplication Engine (Atomic) ---
 async function isDuplicate(messageId: string) {
     const docRef = db.collection('processed_messages').doc(messageId);
     try {
-        // Use create() to ensure atomicity - fails if doc already exists
-        await docRef.create({ processedAt: FieldValue.serverTimestamp() });
+        // Atomic create fails if document already exists
+        await docRef.create({
+            processedAt: FieldValue.serverTimestamp(),
+            messageId: messageId
+        });
+        console.log(`[CORE] Message ${messageId} locked for processing.`);
         return false;
-    } catch (e) {
-        return true;
+    } catch (e: any) {
+        // Code 6 is ALREADY_EXISTS
+        if (e.code === 6 || e.message?.includes('already exists')) {
+            console.warn(`[CORE] Duplicate message detected: ${messageId}. Ignoring.`);
+            return true;
+        }
+        console.error(`[CORE] Error in deduplication check for ${messageId}:`, e.message);
+        return false; // Process anyway if DB fails to not lose messages
     }
 }
 
 // --- AI: Fiko Closer with Memory ---
 async function processWithAI(companyId: string, leadId: string, message: string) {
+    console.log(`[AI] Starting generation for Lead: ${leadId}`);
     const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // Fetch memory
+    // 1. Context Retrieval
     const memoryRef = db.collection('fiko_memory').doc(companyId);
     const memory = await memoryRef.get();
-    const context = memory.exists ? memory.data()?.longTermMemory : "Nouveau lead.";
+    const businessContext = memory.exists ? memory.data()?.longTermMemory : "Expert en vente WhatsApp.";
 
-    const prompt = `Tu es Fiko Closer, un expert en vente. Contexte Entreprise: ${context}. Message Client: ${message}. Réponds de manière courte et persuasive.`;
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    // 2. Prompt Engineering
+    const prompt = `Tu es Fiko Closer.
+    Contexte Entreprise: ${businessContext}
+    ID Client: ${leadId}
+    Message Client: ${message}
 
-    // Update memory & history
+    Réponds de manière concise, humaine et persuasive. Objectif: Closer la vente.`;
+
+    let responseText;
+    if (!process.env.GOOGLE_GEMINI_API_KEY) {
+        console.warn("[AI] No Gemini API Key. Using mock response.");
+        responseText = "Ceci est une réponse automatique de test Fiko. (Simulé)";
+    } else {
+        const result = await model.generateContent(prompt);
+        responseText = result.response.text();
+    }
+    console.log(`[AI] Response generated: "${responseText.substring(0, 30)}..."`);
+
+    // 3. Persistence of AI Response
     await db.collection('messages').add({
         companyId,
         conversationId: leadId,
@@ -65,22 +103,40 @@ async function processWithAI(companyId: string, leadId: string, message: string)
     return responseText;
 }
 
-// --- Multi-tenant Resolver ---
-async function resolveCompanyId(phoneNumber: string) {
-    // In production, this looks up the company linked to the recipient WA ID
+// --- DATA: Multi-tenant Resolver ---
+async function resolveCompanyId(phoneNumber: string | undefined) {
+    if (!phoneNumber) return "fiko_prod_68469";
     const q = await db.collection('companies').where('whatsappNumber', '==', phoneNumber).limit(1).get();
     if (!q.empty) return q.docs[0].id;
-    return "fiko_prod_68469"; // Fallback for review
+    return "fiko_prod_68469"; // Fallback
 }
 
-// --- WhatsApp API Sender ---
+// --- DATA: Lead Synchronization ---
+async function syncLead(companyId: string, from: string, text: string) {
+    console.log(`[DATA] Syncing lead ${from} for company ${companyId}`);
+    const leadRef = db.collection('leads').doc(`${companyId}_${from}`);
+
+    const leadData = {
+        companyId,
+        phone: from,
+        lastMessage: text,
+        updatedAt: FieldValue.serverTimestamp(),
+        status: 'Nouveau'
+    };
+
+    await leadRef.set(leadData, { merge: true });
+    return leadRef.id;
+}
+
+// --- NETWORK: WhatsApp API Sender ---
 async function sendWhatsAppMessage(to: string, text: string) {
+    console.log(`[WHATSAPP] Sending message to ${to}`);
     const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
     const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 
     if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
-        console.warn("WhatsApp credentials missing. Skipping send.");
-        return;
+        console.warn("[WHATSAPP] Credentials missing. Message not sent to Meta.");
+        return false;
     }
 
     try {
@@ -99,87 +155,108 @@ async function sendWhatsAppMessage(to: string, text: string) {
             })
         });
         const data = await response.json();
-        return data;
+        return !!data.messages;
     } catch (error) {
-        console.error("Error sending WhatsApp message:", error);
+        console.error("[WHATSAPP] Error sending message:", error);
+        return false;
     }
 }
 
+// --- WEBHOOK: Meta Validation (GET) ---
 app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
-    if (mode && token) {
-        if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-            console.log("WEBHOOK_VERIFIED");
-            res.status(200).send(challenge);
-        } else {
-            res.sendStatus(403);
-        }
+    if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+        console.log("[WEBHOOK] Verification successful.");
+        return res.status(200).send(challenge);
     }
+    console.warn("[WEBHOOK] Verification failed or missing token.");
+    res.sendStatus(403);
 });
 
+// --- WEBHOOK: Incoming Messages (POST) ---
 app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
-    // 2. Verify Signature
+    console.log("\n[WEBHOOK] Incoming POST request");
+
+    // 1. Signature Check
     if (WHATSAPP_APP_SECRET && !verifySignature(req, res, req.body)) {
-        console.error("Invalid webhook signature.");
         return res.sendStatus(401);
     }
 
-    const bodyObj = JSON.parse(req.body.toString());
-    if (!bodyObj.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
-        return res.sendStatus(200);
+    // 2. Body Parsing
+    let bodyObj;
+    try {
+        bodyObj = JSON.parse(req.body.toString());
+    } catch (e) {
+        console.error("[WEBHOOK] JSON parse error");
+        return res.sendStatus(400);
     }
 
-    const msg = bodyObj.entry[0].changes[0].value.messages[0];
-    const wa_id = msg.id;
-    const from = msg.from;
-    const recipient = bodyObj.entry[0].changes[0].value.metadata?.display_phone_number;
-    const text = msg.text?.body;
+    const message = bodyObj.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    if (!message) {
+        return res.sendStatus(200); // Not a message event
+    }
 
-    // 2. Multi-tenant Resolution
-    const companyId = await resolveCompanyId(recipient);
+    const wa_id = message.id;
+    const from = message.from;
+    const recipient = bodyObj.entry[0].changes[0].value.metadata?.display_phone_number;
+    const text = message.text?.body || "";
+
+    console.log(`[WEBHOOK] New message from ${from}: "${text}"`);
 
     // 3. Deduplication Check
     if (await isDuplicate(wa_id)) {
-        console.log(`Duplicate message ${wa_id} ignored.`);
         return res.sendStatus(200);
     }
 
-    // 4. Quota Check
-    const sub = await db.collection('subscriptions').doc(companyId).get();
-    if (sub.exists && sub.data()?.messagesSent >= sub.data()?.maxMessages) {
-        return res.sendStatus(403);
+    // 4. Company Resolution
+    const companyId = await resolveCompanyId(recipient);
+
+    // 5. Subscription/Quota Check
+    const subRef = db.collection('subscriptions').doc(companyId);
+    const sub = await subRef.get();
+    if (sub.exists) {
+        const data = sub.data();
+        if (data && data.messagesSent >= data.maxMessages) {
+            console.warn(`[QUOTA] Limit reached for ${companyId}`);
+            return res.sendStatus(403);
+        }
+        await subRef.update({ messagesSent: FieldValue.increment(1) });
     }
 
-    // 5. Persistence
+    // 6. Persistence (Lead + Conversation)
+    const leadId = await syncLead(companyId, from, text);
+
     await db.collection('messages').add({
         companyId,
-        conversationId: from,
+        conversationId: leadId,
         sender: 'client',
         content: text,
         timestamp: FieldValue.serverTimestamp()
     });
+    console.log(`[DATA] Saved message to lead ${leadId}`);
 
-    // 6. AI Response (Async)
-    processWithAI(companyId, from, text)
+    // 7. AI & Response (Background)
+    processWithAI(companyId, leadId, text)
         .then(async (aiResponse) => {
-            await sendWhatsAppMessage(from, aiResponse);
+            const success = await sendWhatsAppMessage(from, aiResponse);
+            console.log(`[FINAL] Workflow complete. Success: ${success}`);
         })
-        .catch(console.error);
+        .catch(err => console.error("[FATAL] AI/WhatsApp workflow failed:", err));
 
     res.sendStatus(200);
 });
 
-// --- Campaign Endpoints ---
-app.post("/api/campaigns/generate", async (req, res) => {
+// --- API: Campaign Routes ---
+app.post("/api/campaigns/generate", express.json(), async (req, res) => {
     try {
         const { objective, audience, tone } = req.body;
         const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        const prompt = `Génère un message de campagne WhatsApp. Objectif: ${objective}, Audience: ${audience}, Ton: ${tone}. Retourne un JSON array avec version "short" et "long".`;
+        const prompt = `Génère un message de campagne WhatsApp. Objectif: ${objective}, Audience: ${audience}, Ton: ${tone}. JSON array output version "short" et "long".`;
         const result = await model.generateContent(prompt);
         res.json(JSON.parse(result.response.text() || "[]"));
     } catch (e: any) {
@@ -188,4 +265,11 @@ app.post("/api/campaigns/generate", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Fiko Engine running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`\n🚀 Fiko Production Engine Active on port ${PORT}`);
+    console.log("------------------------------------------");
+    console.log(`App Secret: ${process.env.WHATSAPP_APP_SECRET ? 'OK' : 'MISSING'}`);
+    console.log(`Verify Token: ${process.env.WHATSAPP_VERIFY_TOKEN ? 'OK' : 'MISSING'}`);
+    console.log(`Gemini Key: ${process.env.GOOGLE_GEMINI_API_KEY ? 'OK' : 'MISSING'}`);
+    console.log("------------------------------------------\n");
+});
