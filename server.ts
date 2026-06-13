@@ -81,16 +81,8 @@ app.get("/providers/health", async (req, res) => {
 });
 
 app.get("/ai-debug", async (req, res) => {
-    // Check if older method exists or redirect to providers debug
-    if ((brain as any).getDebugInfo) {
-         res.json((brain as any).getDebugInfo());
-    } else {
-         const debug = await brain.getProvidersDebug();
-         res.json({
-             provider: "orchestrator",
-             ...debug
-         });
-    }
+    const debug = await brain.getDebugInfo();
+    res.json(debug);
 });
 
 app.get("/providers/debug", async (req, res) => {
