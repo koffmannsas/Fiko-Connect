@@ -4,366 +4,452 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { brain } from "./src/ai/brain";
-import crypto from "crypto";
-import dotenv from "dotenv";
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { GoogleGenAI } from "@google/genai";
 
-dotenv.config();
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// --- INFRASTRUCTURE: Firebase Admin ---
-const isLocal = !process.env.GOOGLE_CLOUD_PROJECT && !process.env.FIREBASE_CONFIG && process.env.NODE_ENV !== "production";
-const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "krypton-ai-490214";
-
+// Initialize Firebase Admin
 if (!getApps().length) {
-    if (isLocal) {
-        console.warn("[INIT] No Firebase project detected. Using mock database.");
-        initializeApp({ projectId: "fiko-mock" });
-    } else {
-        initializeApp({
-            credential: applicationDefault(),
-            projectId: PROJECT_ID
-        });
-    }
+    initializeApp({
+        credential: applicationDefault()
+    });
 }
 const db = getFirestore();
 
-const app = express();
+// Automatically creates/syncs Meta Review Account on startup if missing
+async function preseedDemoData(adminDb: any) {
+  try {
+    // Seeding 3 AI Agents
+    const agents = [
+      {
+        id: "agent-mode",
+        companyId: "meta-review-company",
+        name: "Agent Boutique Mode",
+        icon: "👗",
+        desc: "Optimisé pour le prêt-à-porter, gestion des tailles et coloris.",
+        status: "active",
+        model: "gemini-1.5-flash",
+        instructions: "Vous êtes un vendeur expert en mode. Répondez au client avec courtoisie."
+      },
+      {
+        id: "agent-resto",
+        companyId: "meta-review-company",
+        name: "Agent Resto & Lounge",
+        icon: "🍔",
+        desc: "Gestion de menu, prise de commande et suivi des réservations.",
+        status: "active",
+        model: "gemini-1.5-flash",
+        instructions: "Vous êtes le sommelier/serveur virtuel Fiko. Conseillez nos plats signature."
+      },
+      {
+        id: "agent-immo",
+        companyId: "meta-review-company",
+        name: "Agent Immobilier CIV",
+        icon: "🏢",
+        desc: "Capture de budget et fiches de visites de villas ou terrains en Côte d'Ivoire.",
+        status: "active",
+        model: "gemini-1.5-flash",
+        instructions: "Vous effectuez l'accueil des locataires et acheteurs potentiels de villas de standing à Cocody."
+      }
+    ];
 
-// --- STATUS ENDPOINTS ---
-app.get("/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
+    for (const ag of agents) {
+      await adminDb.collection('agents').doc(ag.id).set(ag, { merge: true });
+    }
 
-app.get("/config-check", (req, res) => {
-    res.json({
-        gemini: !!process.env.GOOGLE_GEMINI_API_KEY,
-        whatsapp_token: !!process.env.WHATSAPP_ACCESS_TOKEN,
-        phone_number_id: !!process.env.WHATSAPP_PHONE_NUMBER_ID,
-        app_secret: !!process.env.WHATSAPP_APP_SECRET,
-        verify_token: !!process.env.WHATSAPP_VERIFY_TOKEN,
-        firebase: !!(process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT)
+    // Seeding 5 rich conversations and 15 extra leads (Total 20 leads)
+    const firstNames = ["Marie", "Koffi", "Awa", "Lassina", "Aminata", "Christian", "Cheikh", "Fatou", "Yasmine", "Moussa", "Serge", "Inès", "Jean-Eudes", "Saliou", "Audrey", "Karamoko", "Ousmane", "Tidiane", "Gnamien", "Bamba"];
+    const lastNames = ["Koné", "Yao", "Diallo", "Traoré", "Diop", "Gnamien", "Sow", "Diatta", "Koné", "Coulibaly", "Koffi", "Touré", "Barry", "Cissé", "N'Guessan", "Sylla", "Diagne", "Bamba", "Meité", "Kaboré"];
+    const statuses = ["WARM", "HOT", "CLOSED", "NEW", "CONTACTED"];
+    const providers = ["Wave", "Orange Money", "MTN Money"];
+    const cities = ["Cocody", "Plateau", "Yopougon", "Marcory", "Dakar", "Yoff", "San Pedro", "Bouaké", "Yamassoukro", "Douala"];
+
+    for (let i = 0; i < 20; i++) {
+      const phone = `+22507${Math.floor(10000000 + Math.random() * 90000000)}`;
+      const name = `${firstNames[i]} ${lastNames[i]}`;
+      const status = statuses[i % statuses.length];
+      const dealValue = (i + 1) * 15000 + 4900;
+      
+      const history = i < 5 ? [
+        { role: "user", content: "Bonjour, quel est le tarif de votre pack Premium ?" },
+        { role: "assistant", content: `Bonjour ${firstNames[i]}! Notre pack Premium est proposé à ${dealValue.toLocaleString()} FCFA.` },
+        { role: "user", content: `D'accord, je souhaite réserver. Est-ce que vous acceptez ${providers[i % providers.length]} ?` },
+        { role: "assistant", content: `Absolument! Nous acceptons ${providers[i % providers.length]}. Nous préparons votre facture numérique.` }
+      ] : [];
+
+      await adminDb.collection('leads').doc(phone).set({
+        id: `lead-${i+1}`,
+        phone,
+        name,
+        email: `${firstNames[i].toLowerCase()}.${lastNames[i].toLowerCase()}@example.com`,
+        companyId: "meta-review-company",
+        status,
+        dealValue,
+        city: cities[i % cities.length],
+        country: "Côte d'Ivoire",
+        notes: i < 5 ? `Inbound prospect qualifié via IA Fiko. Intérêt pour le paiement direct par Mobile Money.` : `Saisie manuelle CRM.`,
+        lastActivity: `Il y a ${i + 1} jours`,
+        history,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      if (i < 5) {
+        // Clear and reload messages to avoid duplicates
+        const messageQuery = await adminDb.collection('messages').where('conversationId', '==', phone).get();
+        for (const doc of messageQuery.docs) {
+          await doc.ref.delete();
+        }
+
+        await adminDb.collection('messages').add({
+          conversationId: phone,
+          sender: 'client',
+          content: "Bonjour, quel est le tarif de votre pack Premium ?",
+          timestamp: FieldValue.serverTimestamp()
+        });
+        await adminDb.collection('messages').add({
+          conversationId: phone,
+          sender: 'ai',
+          content: `Bonjour ${firstNames[i]}! Notre pack Premium est proposé à ${dealValue.toLocaleString()} FCFA.`,
+          timestamp: FieldValue.serverTimestamp()
+        });
+      }
+    }
+
+    // Seeding 10 Payments logs
+    const itemsList = ["Kit Couture Pro", "Formation Closeur Elite", "Licence Annuelle Fiko", "Sélection de Tissus Mode", "Abonnement Standard", "Campagne publicitaire WhatsApp", "Module IA Premium"];
+    for (let i = 0; i < 10; i++) {
+      const payId = `pay-${i + 1}`;
+      await adminDb.collection('payments').doc(payId).set({
+        id: payId,
+        companyId: "meta-review-company",
+        name: `${firstNames[i % firstNames.length]} ${lastNames[i % lastNames.length]}`,
+        phone: `+22507${Math.floor(10000000 + Math.random() * 90000000)}`,
+        item: itemsList[i % itemsList.length],
+        value: (i + 1) * 22000 + 1500,
+        provider: providers[i % providers.length],
+        status: i < 8 ? "success" : i === 8 ? "pending" : "failed",
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+
+    console.log("Fiko OS Pre-loading of mock analytics, MRR and ROI data succeeded.");
+  } catch (err) {
+    console.warn("Preseeding details error:", err);
+  }
+}
+
+async function initMetaReviewAccount() {
+  const adminAuth = getAdminAuth();
+  const uid = 'meta-review-account';
+  const email = 'review@krypton-ia.tech';
+  const displayName = 'Meta Review Team';
+  const password = 'MetaReview2026!';
+
+  try {
+    let authUser;
+    try {
+      authUser = await adminAuth.getUser(uid);
+      console.log(`[Fiko Security] Verified existing review account: ${authUser.email}`);
+    } catch (e: any) {
+      if (e.code === 'auth/user-not-found') {
+        console.log("[Fiko Security] Meta Review auth account absent. Creating a secure account...");
+        authUser = await adminAuth.createUser({
+          uid,
+          email,
+          emailVerified: true,
+          password,
+          displayName,
+          disabled: false
+        });
+        console.log("[Fiko Security] Automated creation of Firebase Auth reviewer completed successfully.");
+      } else {
+        throw e;
+      }
+    }
+
+    // Set / merge user details in Firestore
+    await db.collection('users').doc(uid).set({
+      uid,
+      email,
+      displayName,
+      companyId: 'meta-review-company',
+      role: 'super_admin',
+      plan: 'elite',
+      reviewMode: true,
+      status: 'active',
+      country: "Côte d'Ivoire",
+      createdBy: 'system',
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    // Set / merge company detail in Firestore
+    await db.collection('companies').doc('meta-review-company').set({
+      id: 'meta-review-company',
+      name: 'Meta Review Environment',
+      subscription: 'elite',
+      billingStatus: 'active',
+      trial: false,
+      reviewEnvironment: true,
+      industry: 'Technology',
+      country: "Côte d'Ivoire",
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    console.log("[Fiko Security] Firestore collections users/ companies/ fully synchronized.");
+    
+    // Seed demographic demo content
+    await preseedDemoData(db);
+
+  } catch (error) {
+    console.error("[Fiko Security] Cannot bootstrap review credentials:", error);
+  }
+}
+
+// Fire async background initialization
+initMetaReviewAccount();
+
+// Initialize Gemini AI (Lazy initialization)
+let aiClient: GoogleGenAI | null = null;
+function getAIClient(): GoogleGenAI {
+  if (!aiClient) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) throw new Error('GEMINI_API_KEY environment variable is required');
+    aiClient = new GoogleGenAI({ apiKey: key });
+  }
+  return aiClient;
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Lead Scoring & Management Logic
+async function handleIncomingMessage(phone: string, content: string) {
+    const leadRef = db.collection('leads').doc(phone);
+    const messageRef = db.collection('messages').doc();
+
+    const timestamp = FieldValue.serverTimestamp();
+
+    // 1. Save message
+    await messageRef.set({
+        conversationId: phone,
+        sender: 'client',
+        content,
+        timestamp
     });
-});
 
-app.get("/firebase-status", async (req, res) => {
-    try {
-        const collections = await db.listCollections();
-        const collectionIds = collections.map(c => c.id);
-        res.json({
-            projectId: PROJECT_ID,
-            firestoreConnected: true,
-            collections: collectionIds
-        });
-    } catch (e: any) {
-        res.status(500).json({
-            projectId: PROJECT_ID,
-            firestoreConnected: false,
-            error: e.message
-        });
-    }
-});
+    // 2. Manage Lead & AI Reply
+    const leadDoc = await leadRef.get();
+    let history = leadDoc.exists ? leadDoc.data()?.history || [] : [];
+    
+    // AI Reply
+    const prompt = `Lead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step.`;
+    const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
+    const reply = result.text || "Merci pour votre message.";
 
-app.get("/ai-status", async (req, res) => {
-    const status = await brain.getStatus();
-    res.json(status);
-});
+    // 3. Update Lead
+    const updatedHistory = [...history, { role: 'user', content }, { role: 'assistant', content: reply }];
+    
+    await leadRef.set({
+        phone,
+        status: 'WARM', // Simple scoring logic
+        history: updatedHistory,
+        updatedAt: timestamp
+    }, { merge: true });
 
-app.get("/providers", async (req, res) => {
-    const status = await brain.getStatus();
-    res.json(status.details || {});
-});
-
-app.get("/providers/health", async (req, res) => {
-    const status = await brain.getStatus();
-    res.json(status);
-});
-
-app.get("/ai-debug", async (req, res) => {
-    const debug = await brain.getDebugInfo();
-    res.json(debug);
-});
-
-app.get("/providers/debug", async (req, res) => {
-    const debug = await brain.getProvidersDebug();
-    res.json(debug);
-});
-
-const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
-
-// --- SECURITY: Webhook Signature Verification ---
-function verifySignature(req: express.Request, res: express.Response, buf: Buffer) {
-    const signature = req.headers['x-hub-signature-256'] as string;
-    if (!signature) {
-        console.warn("[SECURITY] Missing x-hub-signature-256 header");
-        return false;
-    }
-    const hash = "sha256=" + crypto.createHmac('sha256', WHATSAPP_APP_SECRET).update(buf).digest('hex');
-    const isValid = (signature === hash);
-    if (!isValid) {
-        console.error("[SECURITY] Signature mismatch!");
-    }
-    return isValid;
+    return reply;
 }
 
-// --- CORE: Message Deduplication Engine (Atomic) ---
-async function isDuplicate(messageId: string) {
-    if (process.env.NODE_ENV === "test") return false;
-    const docRef = db.collection('processed_messages').doc(messageId);
-    try {
-        await docRef.create({
-            processedAt: FieldValue.serverTimestamp(),
-            messageId: messageId
-        });
-        console.log(`[CORE] Message ${messageId} locked for processing.`);
-        return false;
-    } catch (e: any) {
-        if (e.code === 6 || e.message?.includes('already exists')) {
-            console.warn(`[CORE] Duplicate message detected: ${messageId}. Ignoring.`);
-            return true;
-        }
-        console.error(`[CORE] Error in deduplication check for ${messageId}:`, e.message);
-        return false;
-    }
-}
+async function startServer() {
+  const app = express();
+  app.use(express.json());
 
-// --- AI: Fiko Closer with Memory ---
-async function processWithAI(companyId: string, leadId: string, message: string) {
-    console.log(`[AI] Starting generation for Lead: ${leadId}`);
+  // API routes
+  app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
-    // 1. Context Retrieval
-    let businessContext = "Expert en vente WhatsApp.";
-    if (process.env.NODE_ENV !== "test") {
-        const memoryRef = db.collection('fiko_memory').doc(companyId);
-        const memory = await memoryRef.get();
-        if (memory.exists) businessContext = memory.data()?.longTermMemory || businessContext;
-    }
-    console.log(`[AI] Context retrieved.`);
+  // AI Campaign Assistant
+  app.post("/api/campaigns/generate", async (req, res) => {
+      try {
+          const { objective, audience, tone } = req.body;
+          const prompt = `You are an expert WhatsApp marketing copywriter. Generate a high-converting WhatsApp campaign message.
+Objective: ${objective}
+Audience: ${audience}
+Tone: ${tone}
 
-    let responseText;
-    if (!process.env.GOOGLE_GEMINI_API_KEY) {
-        console.warn("[AI] No Gemini API Key. Using mock response.");
-        responseText = "Ceci est une réponse automatique de test Fiko. (Simulé)";
-    } else {
-        try {
-            responseText = await brain.generateSmartResponse(companyId, leadId, message, businessContext);
-        } catch (e: any) {
-            console.error("[AI] Brain Error:", e.message);
-            responseText = "Désolé, je rencontre une petite difficulté technique. Je reviens vers vous vite.";
-        }
-    }
-    console.log(`[AI] Response generated: "${responseText.substring(0, 30)}..."`);
+Requirements:
+- Short version and long version
+- Use emojis appropriately
+- Include clear CTA
+- Include variables like {{name}} where appropriate, enclosed in double curly braces.
 
-    // 3. Persistence of AI Response
-    console.log(`[DATA] Saving AI response to messages...`);
-    if (process.env.NODE_ENV !== "test") {
-        await db.collection('messages').add({
-            companyId,
-            conversationId: leadId,
-            sender: 'ai',
-            content: responseText,
-            timestamp: FieldValue.serverTimestamp()
-        });
-    }
-    console.log(`[DATA] AI response persisted.`);
+Format your response as a JSON array where each object has:
+- version: "short" | "long"
+- content: "the message text"`;
 
-    return responseText;
-}
+          const result = await getAIClient().models.generateContent({ 
+              model: "gemini-1.5-flash",
+              contents: prompt,
+              config: {
+                  responseMimeType: "application/json"
+              }
+          });
+          
+          const text = result.text;
+          res.json(JSON.parse(text || "[]"));
+      } catch (e: any) {
+          console.error("AI Generation Error:", e);
+          res.status(500).json({ error: "Generation failed", details: e.message });
+      }
+  });
 
-// --- DATA: Multi-tenant Resolver ---
-async function resolveCompanyId(phoneNumber: string | undefined) {
-    if (!phoneNumber) return "fiko_prod_68469";
-    if (process.env.NODE_ENV === "test") return "fiko_prod_68469";
-    const q = await db.collection('companies').where('whatsappNumber', '==', phoneNumber).limit(1).get();
-    if (!q.empty) return q.docs[0].id;
-    return "fiko_prod_68469";
-}
+  // AI Campaign Score Analyzer
+  app.post("/api/campaigns/analyze", async (req, res) => {
+      try {
+          const { message } = req.body;
+          const prompt = `SYSTEM MODE: CAMPAIGN PERFORMANCE ANALYZER
 
-// --- DATA: Lead Synchronization ---
-async function syncLead(companyId: string, from: string, text: string) {
-    console.log(`[DATA] Syncing lead ${from} for company ${companyId}`);
-    const leadId = `${companyId}_${from}`;
-    if (process.env.NODE_ENV !== "test") {
-        const leadRef = db.collection('leads').doc(leadId);
-        await leadRef.set({
-            companyId,
-            phone: from,
-            lastMessage: text,
-            updatedAt: FieldValue.serverTimestamp(),
-            status: 'Nouveau'
-        }, { merge: true });
-    }
-    return leadId;
-}
+OBJECTIF :
+Analyser une campagne WhatsApp marketing et prédire son potentiel de conversion.
 
-// --- NETWORK: WhatsApp API Sender ---
-async function sendWhatsAppMessage(to: string, text: string) {
-    console.log(`[WHATSAPP] Sending message to ${to}`);
-    const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
+Évaluer :
+1. puissance du hook
+2. qualité CTA
+3. personnalisation
+4. émotion
+5. lisibilité
+6. urgence
+7. potentiel réponse
 
-    if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
-        console.warn("[WHATSAPP] Credentials missing. Message not sent to Meta.");
-        return false;
-    }
+Retourner :
+- score global /100
+- scores détaillés (hookScore /25, ctaScore /20, emotionalScore /20, personalizationScore /15, readabilityScore /20)
+- suggestions amélioration
+- taux ouverture estimé
+- taux réponse estimé
 
-    try {
-        const response = await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${ACCESS_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                messaging_product: "whatsapp",
-                recipient_type: "individual",
-                to,
-                type: "text",
-                text: { body: text }
-            })
-        });
-        const data = await response.json();
-        return !!data.messages;
-    } catch (error) {
-        console.error("[WHATSAPP] Error sending message:", error);
-        return false;
-    }
-}
+STYLE :
+- précis
+- stratégique
+- orienté conversion
 
-// --- WEBHOOK: Meta Validation (GET) ---
-app.get("/webhook", (req, res) => {
+Message à analyser : "${message}"
+
+OUTPUT JSON STRICT :
+{
+  "score": 0,
+  "hookScore": 0,
+  "ctaScore": 0,
+  "emotionalScore": 0,
+  "personalizationScore": 0,
+  "readabilityScore": 0,
+  "predictedOpenRate": 0,
+  "predictedReplyRate": 0,
+  "suggestions": []
+}`;
+
+          const result = await getAIClient().models.generateContent({ 
+              model: "gemini-1.5-flash",
+              contents: prompt,
+              config: {
+                  responseMimeType: "application/json"
+              }
+          });
+          
+          const text = result.text;
+          res.json(JSON.parse(text || "{}"));
+      } catch (e: any) {
+          console.error("AI Analysis Error:", e);
+          res.status(500).json({ error: "Analysis failed", details: e.message });
+      }
+  });
+
+  // AI Campaign Optimizer
+  app.post("/api/campaigns/optimize", async (req, res) => {
+      try {
+          const { message, suggestions } = req.body;
+          const prompt = `SYSTEM MODE: AI CAMPAIGN OPTIMIZATION ENGINE
+
+OBJECTIF :
+Prendre un brouillon de message WhatsApp marketing et l'optimiser pour maximiser la conversion.
+
+MESSAGE ORIGINAL :
+"${message}"
+
+SUGGESTIONS D'AMÉLIORATION IDENTIFIÉES :
+${suggestions ? suggestions.map((s: string) => '- ' + s).join('\\n') : 'Aucune'}
+
+TÂCHE :
+Réécrire complètement ce message pour :
+1. Avoir un Hook explosif 
+2. Augmenter le FOMO / l'urgence
+3. Avoir un CTA hyper clair et actionnable
+4. Garder les variables {{name}} et {{company}} si présentes ou utiles.
+
+Retourne uniquement le texte du nouveau message, sans introduction ni format JSON, juste le texte prêt à envoyer. Le message doit paraître naturel, pas trop formel (c'est WhatsApp), utiliser des emojis avec parcimonie.`;
+
+          const result = await getAIClient().models.generateContent({ 
+              model: "gemini-1.5-flash",
+              contents: prompt
+          });
+          
+          res.json({ optimizedMessage: result.text || "" });
+      } catch (e: any) {
+          console.error("AI Optimization Error:", e);
+          res.status(500).json({ error: "Optimization failed", details: e.message });
+      }
+  });
+
+  // Campaign Send (Mock for WhatsApp API & Scheduler)
+  app.post("/api/campaigns/send", async (req, res) => {
+      try {
+          const { campaignId, contactCount } = req.body;
+          // In a real implementation we would enqueue a job or publish a pubsub message
+          // and batch send via the WhatsApp API.
+          console.log(`Queued campaign ${campaignId} for ${contactCount} contacts.`);
+          res.json({ status: "queued", queuedAt: new Date().toISOString() });
+      } catch (e: any) {
+          res.status(500).json({ error: "Failed to queue campaign" });
+      }
+  });
+
+  // WhatsApp Webhook
+  app.get("/api/webhook", (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-
     if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-        console.log("[WEBHOOK] Verification successful.");
-        return res.status(200).send(challenge);
-    }
-    console.warn("[WEBHOOK] Verification failed or missing token.");
-    res.sendStatus(403);
-});
-
-// --- WEBHOOK: Incoming Messages (POST) ---
-app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
-    console.log("\n[WEBHOOK] Incoming POST request");
-
-    // 1. Signature Check
-    if (WHATSAPP_APP_SECRET && !verifySignature(req, res, req.body)) {
-        return res.sendStatus(401);
-    }
-
-    // 2. Body Parsing
-    let bodyObj;
-    try {
-        bodyObj = JSON.parse(req.body.toString());
-    } catch (e) {
-        console.error("[WEBHOOK] JSON parse error");
-        return res.sendStatus(400);
-    }
-
-    const message = bodyObj.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-    if (!message) {
-        return res.sendStatus(200);
-    }
-
-    const wa_id = message.id;
-    const from = message.from;
-    const recipient = bodyObj.entry[0].changes[0].value.metadata?.display_phone_number;
-    const text = message.text?.body || "";
-
-    console.log(`[WEBHOOK] New message from ${from}: "${text}"`);
-
-    // 3. Deduplication Check
-    if (await isDuplicate(wa_id)) {
-        return res.sendStatus(200);
-    }
-
-    // 4. Company Resolution
-    const companyId = await resolveCompanyId(recipient);
-
-    // 5. Subscription/Quota Check
-    if (process.env.NODE_ENV !== "test") {
-        const subRef = db.collection('subscriptions').doc(companyId);
-        const sub = await subRef.get();
-        if (sub.exists) {
-            const data = sub.data();
-            if (data && data.messagesSent >= data.maxMessages) {
-                console.warn(`[QUOTA] Limit reached for ${companyId}`);
-                return res.sendStatus(403);
-            }
-            await subRef.update({ messagesSent: FieldValue.increment(1) });
-        }
-    }
-
-    // 6. Persistence (Lead + Conversation)
-    const leadId = await syncLead(companyId, from, text);
-
-    console.log(`[DATA] Saving client message to messages...`);
-    if (process.env.NODE_ENV !== "test") {
-        await db.collection('messages').add({
-            companyId,
-            conversationId: leadId,
-            sender: 'client',
-            content: text,
-            timestamp: FieldValue.serverTimestamp()
-        });
-    }
-    console.log(`[DATA] Saved message to lead ${leadId}`);
-
-    // 7. AI & Response (Background)
-    processWithAI(companyId, leadId, text)
-        .then(async (aiResponse) => {
-            const success = await sendWhatsAppMessage(from, aiResponse);
-            console.log(`[FINAL] Workflow complete. Success: ${success}`);
-        })
-        .catch(err => console.error("[FATAL] AI/WhatsApp workflow failed:", err));
-
-    res.sendStatus(200);
-});
-
-// --- API: Campaign Routes ---
-app.post("/api/campaigns/generate", express.json(), async (req, res) => {
-    try {
-        const { objective, audience, tone } = req.body;
-        // Temporary direct call until brain supports specialized prompt types
-        const response = "[]";
-        res.json(JSON.parse(response));
-    } catch (e: any) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// --- PRODUCTION SERVING ---
-if (process.env.NODE_ENV === "production") {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-        res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
-} else {
-    // Vite middleware for dev handled by concurrently/vite
-}
-
-const PORT = process.env.PORT || 3000;
-
-async function verifyAI() {
-    console.log("[INIT] Verifying AI Brain...");
-    const status = await brain.getStatus();
-    if (status.status === "ok") {
-        console.log(`[INIT] AI Brain active via ${status.provider} (${status.model})`);
+      res.status(200).send(req.query["hub.challenge"]);
     } else {
-        console.warn("[INIT] AI Brain is NOT ready.");
+      res.sendStatus(403);
     }
+  });
+
+  app.post("/api/webhook", async (req, res) => {
+    const entry = req.body.entry?.[0]?.changes?.[0]?.value;
+    if (entry?.messages?.[0]) {
+      const message = entry.messages[0];
+      const phone = message.from;
+      const content = message.text.body;
+      
+      const reply = await handleIncomingMessage(phone, content);
+      console.log("Reply:", reply); // Integration with WhatsApp API here
+    }
+    res.sendStatus(200);
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(process.cwd(), 'dist')));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
+    });
+  }
+
+  app.listen(3000, "0.0.0.0", () => console.log(`Server running on http://localhost:3000`));
 }
 
-app.listen(PORT, async () => {
-    await verifyAI();
-    console.log(`\n🚀 Fiko Production Engine Active on port ${PORT}`);
-    console.log("------------------------------------------");
-    console.log(`Mode: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`App Secret: ${process.env.WHATSAPP_APP_SECRET ? 'OK' : 'MISSING'}`);
-    console.log(`Verify Token: ${process.env.WHATSAPP_VERIFY_TOKEN ? 'OK' : 'MISSING'}`);
-    console.log(`Gemini Key: ${process.env.GOOGLE_GEMINI_API_KEY ? 'OK' : 'MISSING'}`);
-    console.log("------------------------------------------\n");
-});
+startServer();

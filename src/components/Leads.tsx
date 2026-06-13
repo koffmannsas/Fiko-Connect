@@ -1,22 +1,20 @@
-import { useState, useEffect } from 'react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, where } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { useState } from 'react';
 import { 
   Search, 
-  MapPin,
-  Filter,
-  Phone,
-  MessageSquare,
+  MapPin, 
+  Filter, 
+  Phone, 
+  MessageSquare, 
   KanbanSquare, 
   ListFilter, 
   Sparkles, 
-  TrendingUp,
+  TrendingUp, 
   Clock, 
   CheckCircle, 
-  Coins,
+  Coins, 
   ChevronRight, 
   Wand2, 
-  AlertCircle,
+  AlertCircle, 
   ArrowRight,
   UserCheck,
   Send,
@@ -24,7 +22,7 @@ import {
 } from 'lucide-react';
 
 interface Lead {
-  id: string;
+  id: number;
   name: string;
   phone: string;
   score: number;
@@ -36,41 +34,20 @@ interface Lead {
   lastMessage: string;
 }
 
-export default function LeadsModule({ onboardingData }: { onboardingData: any }) {
+export default function LeadsModule() {
   const [viewMode, setViewMode] = useState<'pipeline' | 'table'>('pipeline');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-
-  // Dynamic Leads State from Firestore
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const companyId = onboardingData?.companyId || 'fiko_prod_68469';
-
-  useEffect(() => {
-    const q = query(
-      collection(db, 'leads'),
-      where('companyId', '==', companyId),
-      orderBy('updatedAt', 'desc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const leadsList = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          name: data.name || data.phone,
-          phone: data.phone,
-          score: data.score || 50,
-          status: data.status || 'Nouveau',
-          lastActivity: data.updatedAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '...',
-          dealValue: data.dealValue || 0,
-          provider: data.provider || 'Wave',
-          notes: data.notes || '',
-          lastMessage: data.lastMessage || 'Aucun message'
-        };
-      }) as Lead[];
-      setLeads(leadsList);
-    });
-    return unsubscribe;
-  }, [companyId]);
+  
+  // Dynamic Leads State
+  const [leads, setLeads] = useState<Lead[]>([
+    { id: 1, name: 'Marie Koné', phone: '+225 07 48 93 11 20', score: 95, status: 'Négociation', lastActivity: 'Il y a 5 min', dealValue: 45000, provider: 'Wave', notes: 'Intéressée par le pack Luxe. Prête à payer via Wave dès réception du devis.', lastMessage: 'Je veux acheter le pack, vous prenez Wave ?' },
+    { id: 2, name: 'Koffi Yao', phone: '+225 05 92 84 77 15', score: 91, status: 'Qualifié', lastActivity: 'Il y a 12 min', dealValue: 24900, provider: 'Orange Money', notes: 'Demande des détails sur la livraison à Cocody.', lastMessage: 'Est-ce que la livraison est gratuite aujourd’hui ?' },
+    { id: 3, name: 'Awa Diallo', phone: '+225 01 02 03 04 05', score: 88, status: 'Nouveau', lastActivity: 'Il y a 25 min', dealValue: 19900, provider: 'MTN Money', notes: 'A cliqué sur la pub WhatsApp, attend la réponse de l’IA.', lastMessage: 'Bonjour, je souhaite connaître vos tarifs.' },
+    { id: 4, name: 'Zadi Simplice', phone: '+225 05 60 70 80 90', score: 65, status: 'Payé', lastActivity: 'Hier', dealValue: 49900, provider: 'Wave', notes: 'Achat validé automatiquement de bout en bout par l’IA.', lastMessage: 'Merci ! J’ai bien reçu le reçu Wave.' },
+    { id: 5, name: 'Christian Gnamien', phone: '+225 07 11 22 33 44', score: 82, status: 'Proposition', lastActivity: 'Il y a 2 jours', dealValue: 99000, provider: 'Orange Money', notes: 'Devis envoyé par l’IA. En attente de feedback du client.', lastMessage: 'J’examine le montant avec mon associé.' },
+    { id: 6, name: 'Aicha Touré', phone: '+225 01 44 55 66 77', score: 45, status: 'Nouveau', lastActivity: 'Hier', dealValue: 19900, provider: 'Wave', notes: 'A abandonné le panier après avoir demandé les conditions.', lastMessage: 'Ok merci, je vais réfléchir.' },
+  ]);
 
   // Sales Coach interactive state
   const [coachStatus, setCoachStatus] = useState<'idle' | 'running' | 'success'>('idle');
@@ -93,53 +70,54 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
   ] as const;
 
   // Run J+2 Auto Relance from Fiko AI Sales Coach
-  const triggerCoachRelance = async () => {
+  const triggerCoachRelance = () => {
     setCoachStatus('running');
-    // For demo, we update the first lead that is not paid
-    const target = leads.find(l => l.status !== 'Payé');
-    if (target) {
-        await updateDoc(doc(db, 'leads', target.id), {
-            status: 'Payé',
-            notes: 'Converti automatiquement via Relance J+2 Fiko FOS !',
-            updatedAt: serverTimestamp()
-        });
-        setSuccessLeadName(target.name);
-    }
     setTimeout(() => {
+      // Find Marie Koné (or another high score) and convert them to Paid
+      setLeads(prevLeads => prevLeads.map(lead => {
+        if (lead.id === 1) { // Marie Koné
+          return {
+            ...lead,
+            status: 'Payé',
+            lastActivity: 'À l’instant',
+            notes: 'Convertie automatiquement via Relance J+2 Fiko FOS ! Paiement Wave de 45 000 FCFA validé.'
+          };
+        }
+        return lead;
+      }));
+      setSuccessLeadName('Marie Koné');
       setCoachStatus('success');
-    }, 1500);
+    }, 2000);
   };
 
   // Convert currently selected lead manually to Paid
-  const markAsPaid = async (leadId: string) => {
-    try {
-      await updateDoc(doc(db, 'leads', leadId), {
-          status: 'Payé',
-          updatedAt: serverTimestamp(),
-          notes: 'Paiement Wave/Orange validé en un clic !'
-      });
-    } catch (err) {
-        console.error("Error marking as paid:", err);
+  const markAsPaid = (leadId: number) => {
+    setLeads(prev => prev.map(l => {
+      if (l.id === leadId) {
+        return { ...l, status: 'Payé', lastActivity: 'À l’instant', notes: 'Paiement Wave/Orange validé en un clic !' };
+      }
+      return l;
+    }));
+    if (selectedLead && selectedLead.id === leadId) {
+      setSelectedLead(prev => prev ? { ...prev, status: 'Payé', lastActivity: 'À l’instant' } : null);
     }
   };
 
   // Move lead stage
-  const advanceLeadStage = async (leadId: string) => {
+  const advanceLeadStage = (leadId: number) => {
     const stages: Lead['status'][] = ['Nouveau', 'Qualifié', 'Proposition', 'Négociation', 'Payé'];
-    const lead = leads.find(l => l.id === leadId);
-    if (!lead) return;
-
-    const currentIndex = stages.indexOf(lead.status);
-    const nextStage = stages[Math.min(currentIndex + 1, stages.length - 1)];
-
-    try {
-        await updateDoc(doc(db, 'leads', leadId), {
-            status: nextStage,
-            updatedAt: serverTimestamp()
-        });
-    } catch (err) {
-        console.error("Error advancing stage:", err);
-    }
+    setLeads(prev => prev.map(l => {
+      if (l.id === leadId) {
+        const currentIndex = stages.indexOf(l.status);
+        const nextStage = stages[Math.min(currentIndex + 1, stages.length - 1)];
+        const updated = { ...l, status: nextStage, lastActivity: 'À l’instant' };
+        if (selectedLead && selectedLead.id === leadId) {
+          setSelectedLead(updated);
+        }
+        return updated;
+      }
+      return l;
+    }));
   };
 
   return (
@@ -155,7 +133,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
               </span>
               <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">Optimisation des ventes</span>
             </div>
-            <h2 className="text-xl font-black text-white">Analyse des opportunités</h2>
+            <h2 className="text-xl font-black text-white">3 Leads chauds inactifs détectés (Marie, Koffi, Awa)</h2>
             <p className="text-sm text-gray-400 max-w-xl">
               Votre IA estime qu'une relance automatique personnalisée basée sur l'intérêt détecté peut libérer immédiatement <strong className="text-emerald-400">89 800 FCFA</strong> de ventes.
             </p>
@@ -163,7 +141,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
 
           <div className="shrink-0 w-full md:w-auto">
             {coachStatus === 'idle' && (
-              <button
+              <button 
                 onClick={triggerCoachRelance}
                 className="w-full md:w-auto bg-[#E10600] text-white px-6 py-3.5 rounded-xl font-black text-xs hover:scale-105 active:scale-95 transition flex items-center justify-center gap-2 shadow-lg shadow-red-900/30"
               >
@@ -172,7 +150,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
             )}
 
             {coachStatus === 'running' && (
-              <button
+              <button 
                 disabled
                 className="w-full md:w-auto bg-gray-900 border border-gray-800 text-gray-400 px-6 py-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 cursor-wait"
               >
@@ -183,7 +161,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
             {coachStatus === 'success' && (
               <div className="bg-green-950/40 border border-green-900/80 px-5 py-3 rounded-xl flex items-center gap-2 text-green-300 font-extrabold text-xs">
                 <CheckCircle className="text-[#25D366]" size={16} />
-                <span>Succès ! {successLeadName} a été relancé avec succès. 🎉</span>
+                <span>Succès ! {successLeadName} a de suite payé 45 000 FCFA par Wave ! 🎉</span>
               </div>
             )}
           </div>
@@ -203,22 +181,22 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
             <Search className="absolute left-3 top-3 text-gray-500" size={16} />
             <input 
               type="text" 
-              placeholder="Chercher Marie, Wave, Cocody..."
+              placeholder="Chercher Marie, Wave, Cocody..." 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-[#0a0a0a] border border-gray-850 rounded-xl p-2.5 pl-9 text-xs text-white focus:outline-none focus:border-fiko-red"
+              className="w-full bg-[#0a0a0a] border border-gray-850 rounded-xl p-2.5 pl-9 text-xs text-white focus:outline-none focus:border-fiko-red" 
             />
           </div>
 
           {/* VIEW SWITCHER */}
           <div className="bg-black border border-gray-850 rounded-xl p-1 flex gap-1">
-            <button
+            <button 
               onClick={() => setViewMode('pipeline')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition ${viewMode === 'pipeline' ? 'bg-[#E10600] text-white' : 'text-gray-400 hover:text-white'}`}
             >
               <KanbanSquare size={14} /> Pipeline
             </button>
-            <button
+            <button 
               onClick={() => setViewMode('table')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition ${viewMode === 'table' ? 'bg-[#E10600] text-white' : 'text-gray-400 hover:text-white'}`}
             >
@@ -236,8 +214,8 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
             const totalValue = laneLeads.reduce((sum, lead) => sum + lead.dealValue, 0);
 
             return (
-              <div
-                key={lane.key}
+              <div 
+                key={lane.key} 
                 className={`bg-[#070707] rounded-2xl border border-gray-900 p-4 flex flex-col min-h-[500px] border-t-2 ${lane.borderTop}`}
               >
                 {/* Lane Header */}
@@ -262,8 +240,8 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
                     </div>
                   ) : (
                     laneLeads.map((lead) => (
-                      <div
-                        key={lead.id}
+                      <div 
+                        key={lead.id} 
                         onClick={() => setSelectedLead(lead)}
                         className={`bg-[#0d0d0d] border border-gray-850 hover:border-gray-700 rounded-xl p-3 cursor-pointer transition active:scale-98 shadow-sm hover:shadow-[0_4px_15px_rgba(0,0,0,0.4)] flex flex-col group justify-between`}
                       >
@@ -306,6 +284,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
                 <th className="p-4 text-center">Score d'Intérêt</th>
                 <th className="p-4">Fiko Etape</th>
                 <th className="p-4">Montant Estimé</th>
+                <th className="p-4">Canal Canard</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -313,7 +292,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
               {filteredLeads.map(lead => (
                 <tr key={lead.id} className="hover:bg-[#111] transition-all cursor-pointer" onClick={() => setSelectedLead(lead)}>
                   <td className="p-4 flex items-center gap-3">
-                    <div className="bg-gray-900 border border-gray-800 rounded-full w-10 h-10 flex items-center justify-center font-black text-sm text-fiko-red">{(lead.name || 'P')[0]}</div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-full w-10 h-10 flex items-center justify-center font-black text-sm text-fiko-red">{lead.name[0]}</div>
                     <div>
                       <p className="font-extrabold text-white text-xs">{lead.name}</p>
                       <p className="text-[10px] text-gray-500 font-mono">{lead.phone}</p>
@@ -332,16 +311,17 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
                     </span>
                   </td>
                   <td className="p-4 font-black text-[#25D366] font-mono text-xs">{lead.dealValue.toLocaleString()} FCFA</td>
+                  <td className="p-4 font-mono text-xs text-blue-400">{lead.provider}</td>
                   <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-2 justify-end">
-                      <button
+                      <button 
                         onClick={() => advanceLeadStage(lead.id)}
                         className="p-2 bg-gray-900 hover:bg-fiko-red hover:text-white rounded-lg transition text-xs font-bold"
                         title="Avancer d'étape"
                       >
                         <ChevronRight size={14}/>
                       </button>
-                      <button
+                      <button 
                         onClick={() => markAsPaid(lead.id)}
                         disabled={lead.status === 'Payé'}
                         className="px-3 py-1 bg-emerald-950 text-emerald-400 border border-green-900 hover:bg-emerald-900 hover:text-white rounded-lg transition text-[10px] font-black disabled:opacity-30"
@@ -361,7 +341,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
       {selectedLead && (
         <div className="fixed inset-0 bg-black/80 flex justify-end z-50 animate-in fade-in duration-300">
           <div className="w-full max-w-lg bg-[#0a0a0a] border-l border-gray-850 h-full p-6 flex flex-col justify-between shadow-2xl relative overflow-y-auto">
-
+            
             {/* Top Close */}
             <div>
               <div className="flex justify-between items-center pb-4 border-b border-gray-900 mb-6">
@@ -371,7 +351,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
                   </span>
                   <h3 className="text-xl font-black text-white mt-1.5">{selectedLead.name}</h3>
                 </div>
-                <button
+                <button 
                   onClick={() => setSelectedLead(null)}
                   className="bg-gray-900 hover:bg-gray-850 border border-gray-850 text-gray-400 p-2 rounded-xl transition"
                 >
@@ -424,9 +404,9 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
             {/* Action Bar */}
             <div className="border-t border-gray-950 pt-6 mt-6 space-y-3">
               <span className="text-[9px] uppercase font-bold text-gray-500 block">Actions Commerciales FOS :</span>
-
+              
               <div className="grid grid-cols-2 gap-3">
-                <button
+                <button 
                   onClick={() => advanceLeadStage(selectedLead.id)}
                   disabled={selectedLead.status === 'Payé'}
                   className="bg-gray-900 border border-gray-850 hover:bg-gray-800 text-white font-black text-xs py-3.5 rounded-xl transition flex justify-center items-center gap-1.5 disabled:opacity-35"
@@ -434,7 +414,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
                   Etape Suivante ➡️
                 </button>
 
-                <button
+                <button 
                   onClick={() => markAsPaid(selectedLead.id)}
                   disabled={selectedLead.status === 'Payé'}
                   className="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs py-3.5 rounded-xl transition flex justify-center items-center gap-1.5 disabled:opacity-35"
@@ -452,7 +432,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
                   <p className="leading-tight">
                     "Bonjour {selectedLead.name}, je vois que vous préfériez payer par {selectedLead.provider}. Souhaitez-vous recevoir votre lien de paiement Wave/Orange direct ?"
                   </p>
-                  <button
+                  <button 
                     onClick={() => {
                       alert(`WhatsApp envoyé à ${selectedLead.name} !`);
                       advanceLeadStage(selectedLead.id);
