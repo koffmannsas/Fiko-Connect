@@ -52,13 +52,13 @@ app.get("/firebase-status", async (req, res) => {
         const collections = await db.listCollections();
         const collectionIds = collections.map(c => c.id);
         res.json({
-            projectId: db.projectId,
+            projectId: PROJECT_ID,
             firestoreConnected: true,
             collections: collectionIds
         });
     } catch (e: any) {
         res.status(500).json({
-            projectId: db.projectId,
+            projectId: PROJECT_ID,
             firestoreConnected: false,
             error: e.message
         });
