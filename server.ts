@@ -1,3 +1,4 @@
+import "./src/env-init";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -6,9 +7,6 @@ import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { brain } from "./src/ai/brain";
 import crypto from "crypto";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

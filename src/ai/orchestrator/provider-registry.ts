@@ -19,10 +19,12 @@ export class ProviderRegistry {
             console.log("[PROVIDER] DeepSeek registered");
         }
         if (geminiKey) {
+            console.log("[PROVIDER] Gemini key detected");
             this.providers.set("gemini", new GeminiProvider(geminiKey));
             console.log("[PROVIDER] Gemini registered");
         }
         if (openaiKey) {
+            console.log("[PROVIDER] OpenAI key detected");
             this.providers.set("openai", new OpenAIProvider(openaiKey));
             console.log("[PROVIDER] OpenAI registered");
         }
