@@ -44,6 +44,10 @@ export class FikoBrain {
         };
     }
 
+    async getProvidersDebug() {
+        return await orchestrator.getRegistry().getDebugInfo();
+    }
+
     getProvidersStatus() {
         // Simplified for UI
         return {
