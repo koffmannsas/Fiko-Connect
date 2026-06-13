@@ -70,8 +70,18 @@ app.get("/ai-status", async (req, res) => {
     res.json(status);
 });
 
-app.get("/providers", (req, res) => {
-    res.json(brain.getProvidersStatus());
+app.get("/providers", async (req, res) => {
+    const status = await brain.getStatus();
+    res.json(status.details || {});
+});
+
+app.get("/providers/health", async (req, res) => {
+    const status = await brain.getStatus();
+    res.json(status);
+});
+
+app.get("/ai-debug", (req, res) => {
+    res.json(brain.getDebugInfo());
 });
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
