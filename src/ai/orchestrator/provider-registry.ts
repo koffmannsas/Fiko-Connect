@@ -61,27 +61,36 @@ export class ProviderRegistry {
     }
 
     async getDebugInfo() {
-        const debug: any = {
-            env: {
-                deepseek: !!process.env.DEEPSEEK_API_KEY,
-                gemini: !!process.env.GOOGLE_GEMINI_API_KEY,
-                openai: !!process.env.OPENAI_API_KEY
-            },
-            registered: Array.from(this.providers.keys()),
-            verified: {},
-            lastErrors: {}
+        const providers: any = {};
+        const env: any = {
+            deepseek: !!process.env.DEEPSEEK_API_KEY,
+            gemini: !!process.env.GOOGLE_GEMINI_API_KEY,
+            openai: !!process.env.OPENAI_API_KEY
         };
 
-        for (const [name, provider] of this.providers) {
-            try {
-                debug.verified[name] = await provider.verify();
-                debug.lastErrors[name] = provider.getLastError();
-            } catch (e: any) {
-                debug.verified[name] = false;
-                debug.lastErrors[name] = e.message;
+        for (const name of this.priorityList) {
+            const provider = this.providers.get(name);
+            if (provider) {
+                let verified = false;
+                try {
+                    verified = await provider.verify();
+                } catch (e) {}
+
+                providers[name] = {
+                    registered: true,
+                    verified,
+                    lastError: provider.getLastError()
+                };
+            } else {
+                providers[name] = {
+                    registered: false
+                };
             }
         }
 
-        return debug;
+        return {
+            providers,
+            environment: env
+        };
     }
 }
