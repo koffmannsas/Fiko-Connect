@@ -57,7 +57,9 @@ export class FikoBrain {
                     companyId,
                     leadId,
                     provider: "gemini",
+                    model: this.gemini?.modelName,
                     error: error.message,
+                    details: this.gemini?.lastError || null,
                     timestamp: FieldValue.serverTimestamp()
                 });
             } catch (fsErr) {
@@ -91,6 +93,22 @@ export class FikoBrain {
             status: geminiVerified ? "ok" : "degraded",
             geminiVerified,
             fallbackActive: true
+        };
+    }
+
+    getDebugInfo() {
+        const geminiError = this.gemini?.lastError;
+        const errorMsg = geminiError?.message || "";
+
+        return {
+            provider: "gemini",
+            model: this.gemini?.modelName || "none",
+            apiKeyPresent: !!process.env.GOOGLE_GEMINI_API_KEY,
+            verificationPassed: !geminiError && !!this.gemini,
+            lastError: geminiError,
+            billingError: errorMsg.toLowerCase().includes("billing") || errorMsg.includes("402"),
+            quotaError: errorMsg.includes("429") || errorMsg.toLowerCase().includes("quota"),
+            status: this.gemini ? (geminiError ? "error" : "ok") : "missing"
         };
     }
 }

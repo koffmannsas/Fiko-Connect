@@ -74,6 +74,10 @@ app.get("/providers", (req, res) => {
     res.json(brain.getProvidersStatus());
 });
 
+app.get("/ai-debug", (req, res) => {
+    res.json(brain.getDebugInfo());
+});
+
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
 
 // --- SECURITY: Webhook Signature Verification ---

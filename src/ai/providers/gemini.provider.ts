@@ -3,7 +3,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export class GeminiProvider {
     private client: GoogleGenerativeAI;
     private model: any;
-    public readonly modelName = "gemini-1.5-flash-latest"; // Using -latest to avoid specific version issues
+    public readonly modelName = "gemini-1.5-flash-latest";
+    public lastError: any = null;
 
     constructor(apiKey: string) {
         if (!apiKey) throw new Error("Gemini API Key is required");
@@ -19,18 +20,38 @@ export class GeminiProvider {
         try {
             const result = await this.model.generateContent(fullPrompt);
             const response = await result.response;
-            return response.text();
+            const text = response.text();
+            this.lastError = null;
+            return text;
         } catch (error: any) {
-            console.error("[GeminiProvider] Error:", error.message);
+            this.captureError(error);
             throw error;
         }
     }
 
+    private captureError(error: any) {
+        this.lastError = {
+            message: error.message,
+            stack: error.stack,
+            status: error.status,
+            statusText: error.statusText,
+            details: error.response?.data || error.details,
+            timestamp: new Date().toISOString()
+        };
+        console.error("[GeminiProvider] CRITICAL ERROR CAPTURED:", JSON.stringify(this.lastError, null, 2));
+    }
+
     async verify() {
         try {
-            const result = await this.model.generateContent("ping");
-            return !!result.response.text();
-        } catch (e) {
+            const result = await this.model.generateContent("Say OK");
+            const text = result.response.text();
+            if (text) {
+                this.lastError = null;
+                return true;
+            }
+            return false;
+        } catch (e: any) {
+            this.captureError(e);
             return false;
         }
     }
