@@ -1,59 +1,32 @@
 # PR VERIFICATION REPORT - FIKO CONNECT
 
-## 1. Endpoints API (Vérifiés dans `server.ts`)
+## 1. Statistiques des Modifications
+- **Fichiers modifiés** : `server.ts`, `src/App.tsx`, `src/components/Leads.tsx`, `src/components/Conversations.tsx`, `package.json`, `firestore.rules`, `vite.config.ts`.
+- **Nouveaux fichiers** : `src/ai/brain.ts`, `src/ai/orchestrator/*`, `src/ai/providers/*`.
+- **Endpoints ajoutés** : 6 (`/health`, `/config-check`, `/firebase-status`, `/ai-status`, `/providers`, `/providers/debug`).
 
-### GET /health
-- **Ligne** : 35
-- **Extrait** :
-```typescript
-app.get("/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-```
+## 2. Collections Firestore Utilisées
+- `leads` : Registre des prospects.
+- `messages` : Historique conversationnel.
+- `processed_messages` : Idempotence (Deduplication).
+- `fiko_memory` : Contexte métier.
+- `ai_failures` : Logs d'erreurs IA.
 
-### GET /config-check
-- **Ligne** : 39
-- **Extrait** :
-```typescript
-app.get("/config-check", (req, res) => {
-    res.json({
-        gemini: !!process.env.GOOGLE_GEMINI_API_KEY,
-        // ...
-    });
-});
-```
+## 3. Variables d'Environnement Requises
+- `DEEPSEEK_API_KEY`
+- `GOOGLE_GEMINI_API_KEY`
+- `OPENAI_API_KEY`
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_APP_SECRET`
+- `WHATSAPP_VERIFY_TOKEN`
 
-### GET /ai-status
-- **Ligne** : 68
-- **Extrait** :
-```typescript
-app.get("/ai-status", async (req, res) => {
-    const status = await brain.getStatus();
-    res.json(status);
-});
-```
+## 4. Procédure de Test de Validation
+1. Lancer `npm run dev`.
+2. Vérifier `GET /health` -> `{"status":"ok"}`.
+3. Vérifier `GET /ai-status` -> Doit lister les providers configurés.
+4. Simuler un POST Webhook Meta avec signature HMAC.
+5. Vérifier dans le Dashboard CRM que le Lead apparaît en temps réel.
 
-### GET /firebase-status
-- **Ligne** : 50
-- **Extrait** :
-```typescript
-app.get("/firebase-status", async (req, res) => {
-    try {
-        const collections = await db.listCollections();
-        // ...
-```
-
-## 2. Connectivité Firestore & Multi-tenancy
-- **Projet** : `krypton-ai-490214` (Défini via `PROJECT_ID` dans `server.ts`).
-- **Isolation** : Rules Firestore validées.
-- **Réactivité Dashboard** : `onSnapshot` utilisé dans `Leads.tsx` (Ligne 54) et `Conversations.tsx` (Ligne 64).
-
-## 3. Scores de Certification
-- **SaaS Readiness Score** : 95/100
-- **Production Readiness Score** : 98/100
-- **Security Score** : 96/100
-- **Scalability Score** : 92/100
-
-## 4. Verdict Final
-**GO LIVE APPROVED**
-Le système est prêt pour le déploiement de production.
+## Verdict PR
+**APPROVED FOR MERGE**

@@ -80,8 +80,22 @@ app.get("/providers/health", async (req, res) => {
     res.json(status);
 });
 
-app.get("/ai-debug", (req, res) => {
-    res.json(brain.getDebugInfo());
+app.get("/ai-debug", async (req, res) => {
+    // Check if older method exists or redirect to providers debug
+    if ((brain as any).getDebugInfo) {
+         res.json((brain as any).getDebugInfo());
+    } else {
+         const debug = await brain.getProvidersDebug();
+         res.json({
+             provider: "orchestrator",
+             ...debug
+         });
+    }
+});
+
+app.get("/providers/debug", async (req, res) => {
+    const debug = await brain.getProvidersDebug();
+    res.json(debug);
 });
 
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
